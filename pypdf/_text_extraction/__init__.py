@@ -4,26 +4,107 @@ Code related to text extraction.
 Some parts are still in _page.py. In doubt, they will stay there.
 """
 
+import copy
 import math
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Union
 
 from ..generic import DictionaryObject, TextStringObject, encode_pdfdocencoding
 
 CUSTOM_RTL_MIN: int = -1
 CUSTOM_RTL_MAX: int = -1
-CUSTOM_RTL_SPECIAL_CHARS: List[int] = []
+CUSTOM_RTL_SPECIAL_CHARS: list[int] = []
 LAYOUT_NEW_BT_GROUP_SPACE_WIDTHS: int = 5
+
+
+Mat = tuple[float, float, float, float, float, float]
+
+def mult(m: Mat, n: Mat) -> Mat:
+    return (
+        m[0] * n[0] + m[1] * n[2],
+        m[0] * n[1] + m[1] * n[3],
+        m[2] * n[0] + m[3] * n[2],
+        m[2] * n[1] + m[3] * n[3],
+        m[4] * n[0] + m[5] * n[2] + n[4],
+        m[4] * n[1] + m[5] * n[3] + n[5],
+    )
+
+def xy_mult(xy: tuple[float, float], mat: Mat) -> tuple[float, float]:
+    x, y = xy  # [[x, y]]
+    a, b, c, d, e, f = mat # [[a, b, 0], [c, d, 0], [e, f, 1]]
+    return (a*x + c*y + e, b*x + d*y + f)
 
 
 class OrientationNotFoundError(Exception):
     pass
 
 
+class CharMap:
+    """
+    (Added by Masaharu-Kato)
+    Charactor-map data class for `extract_text` method in PageObject
+    """
+    def __init__(
+        self,
+        encoding: str | dict[int, str],
+        map_dict: dict[str, str],
+        font_res_name: str, # internal name, not the real font-name
+        font_dict: dict | None, # The font-dictionary describes the font
+    ):
+        self.encoding = encoding
+        self.map_dict = map_dict
+        self.font_res_name = font_res_name
+        self.font_dict = font_dict
+
+    def __str__(self):
+        return self.font_res_name
+    
+    def __repr__(self):
+        return repr(self.font_dict)
+
+
+class TextState:
+    """
+    (Added by Masaharu-Kato)
+    Text state
+    """
+    def __init__(
+        self,
+        cm_matrix: Mat,
+        tm_matrix: Mat,
+        charmap: CharMap,
+        font_size: float,
+        char_scale: float,
+        space_scale: float,
+        _space_width: float,
+        text_leading: float,
+        rtl_dir: bool, # right-to-left
+    ):
+        self.cm_matrix = cm_matrix
+        self.tm_matrix = tm_matrix
+        self.cmap = charmap
+        self.font_size = font_size
+        self.char_scale = char_scale
+        self.space_scale = space_scale
+        self._space_width = _space_width
+        self.text_leading = text_leading
+        self.rtl_dir = rtl_dir  # right-to-left
+    
+    @property
+    def space_width(self):
+        return self._space_width / 1000.0
+
+    def pos(self) -> tuple[float, float]:
+        return xy_mult((self.tm_matrix[4], self.tm_matrix[5]), self.cm_matrix)
+    
+    def copy(self):
+        return copy.copy(self)
+
+
 def set_custom_rtl(
     _min: Union[str, int, None] = None,
     _max: Union[str, int, None] = None,
-    specials: Union[str, List[int], None] = None,
-) -> Tuple[int, int, List[int]]:
+    specials: Union[str, list[int], None] = None,
+) -> tuple[int, int, list[int]]:
     """
     Change the Right-To-Left and special characters custom parameters.
 
@@ -64,18 +145,7 @@ def set_custom_rtl(
     return CUSTOM_RTL_MIN, CUSTOM_RTL_MAX, CUSTOM_RTL_SPECIAL_CHARS
 
 
-def mult(m: List[float], n: List[float]) -> List[float]:
-    return [
-        m[0] * n[0] + m[1] * n[2],
-        m[0] * n[1] + m[1] * n[3],
-        m[2] * n[0] + m[3] * n[2],
-        m[2] * n[1] + m[3] * n[3],
-        m[4] * n[0] + m[5] * n[2] + n[4],
-        m[4] * n[1] + m[5] * n[3] + n[5],
-    ]
-
-
-def orient(m: List[float]) -> int:
+def orient(m: Mat) -> int:
     if m[3] > 1e-6:
         return 0
     elif m[3] < -1e-6:
@@ -88,32 +158,22 @@ def orient(m: List[float]) -> int:
 
 def crlf_space_check(
     text: str,
-    cmtm_prev: Tuple[List[float], List[float]],
-    cmtm_matrix: Tuple[List[float], List[float]],
-    memo_cmtm: Tuple[List[float], List[float]],
-    cmap: Tuple[
-        Union[str, Dict[int, str]], Dict[str, str], str, Optional[DictionaryObject]
-    ],
-    orientations: Tuple[int, ...],
+    st: TextState,
+    cmtm_prev: tuple[Mat, Mat],
+    orientations: tuple[int, ...],
     output: str,
-    font_size: float,
-    visitor_text: Optional[Callable[[Any, Any, Any, Any, Any], None]],
-    spacewidth: float,
-) -> Tuple[str, str, List[float], List[float]]:
+    visitor_text: Optional[Callable[[str, TextState], None]],
+) -> tuple[str, str, Mat, Mat]:
     cm_prev = cmtm_prev[0]
     tm_prev = cmtm_prev[1]
-    cm_matrix = cmtm_matrix[0]
-    tm_matrix = cmtm_matrix[1]
-    memo_cm = memo_cmtm[0]
-    memo_tm = memo_cmtm[1]
 
     m_prev = mult(tm_prev, cm_prev)
-    m = mult(tm_matrix, cm_matrix)
+    m = mult(st.tm_matrix, st.cm_matrix)
     orientation = orient(m)
     delta_x = m[4] - m_prev[4]
     delta_y = m[5] - m_prev[5]
     k = math.sqrt(abs(m[0] * m[3]) + abs(m[1] * m[2]))
-    f = font_size * k
+    f = st.font_size * k
     cm_prev = m
     if orientation not in orientations:
         raise OrientationNotFoundError
@@ -123,17 +183,11 @@ def crlf_space_check(
                 if (output + text)[-1] != "\n":
                     output += text + "\n"
                     if visitor_text is not None:
-                        visitor_text(
-                            text + "\n",
-                            memo_cm,
-                            memo_tm,
-                            cmap[3],
-                            font_size,
-                        )
+                        visitor_text(text + "\n", st.copy())
                     text = ""
             elif (
                 abs(delta_y) < f * 0.3
-                and abs(delta_x) > spacewidth * f * 15
+                and abs(delta_x) > st.space_width * f * 15
                 and (output + text)[-1] != " "
             ):
                 text += " "
@@ -142,17 +196,11 @@ def crlf_space_check(
                 if (output + text)[-1] != "\n":
                     output += text + "\n"
                     if visitor_text is not None:
-                        visitor_text(
-                            text + "\n",
-                            memo_cm,
-                            memo_tm,
-                            cmap[3],
-                            font_size,
-                        )
+                        visitor_text(text + "\n", st.copy())
                     text = ""
             elif (
                 abs(delta_y) < f * 0.3
-                and abs(delta_x) > spacewidth * f * 15
+                and abs(delta_x) > st.space_width * f * 15
                 and (output + text)[-1] != " "
             ):
                 text += " "
@@ -161,17 +209,11 @@ def crlf_space_check(
                 if (output + text)[-1] != "\n":
                     output += text + "\n"
                     if visitor_text is not None:
-                        visitor_text(
-                            text + "\n",
-                            memo_cm,
-                            memo_tm,
-                            cmap[3],
-                            font_size,
-                        )
+                        visitor_text(text + "\n", st.copy())
                     text = ""
             elif (
                 abs(delta_x) < f * 0.3
-                and abs(delta_y) > spacewidth * f * 15
+                and abs(delta_y) > st.space_width * f * 15
                 and (output + text)[-1] != " "
             ):
                 text += " "
@@ -180,42 +222,30 @@ def crlf_space_check(
                 if (output + text)[-1] != "\n":
                     output += text + "\n"
                     if visitor_text is not None:
-                        visitor_text(
-                            text + "\n",
-                            memo_cm,
-                            memo_tm,
-                            cmap[3],
-                            font_size,
-                        )
+                        visitor_text(text + "\n", st.copy())
                     text = ""
             elif (
                 abs(delta_x) < f * 0.3
-                and abs(delta_y) > spacewidth * f * 15
+                and abs(delta_y) > st.space_width * f * 15
                 and (output + text)[-1] != " "
             ):
                 text += " "
     except Exception:
         pass
-    tm_prev = tm_matrix.copy()
-    cm_prev = cm_matrix.copy()
+    tm_prev = st.tm_matrix
+    cm_prev = st.cm_matrix
     return text, output, cm_prev, tm_prev
 
 
 def handle_tj(
     text: str,
-    operands: List[Union[str, TextStringObject]],
-    cm_matrix: List[float],
-    tm_matrix: List[float],
-    cmap: Tuple[
-        Union[str, Dict[int, str]], Dict[str, str], str, Optional[DictionaryObject]
-    ],
-    orientations: Tuple[int, ...],
+    operands: list[Union[str, TextStringObject]],
+    st: TextState,
+    orientations: tuple[int, ...],
     output: str,
-    font_size: float,
-    rtl_dir: bool,
-    visitor_text: Optional[Callable[[Any, Any, Any, Any, Any], None]],
-) -> Tuple[str, bool]:
-    m = mult(tm_matrix, cm_matrix)
+    visitor_text: Optional[Callable[[str, TextState], None]],
+) -> str:
+    m = mult(st.tm_matrix, st.cm_matrix)
     orientation = orient(m)
     if orientation in orientations and len(operands) > 0:
         if isinstance(operands[0], str):
@@ -227,23 +257,23 @@ def handle_tj(
                 if isinstance(operands[0], str)
                 else operands[0]
             )
-            if isinstance(cmap[0], str):
+            if isinstance(st.cmap.encoding, str):
                 try:
-                    t = tt.decode(cmap[0], "surrogatepass")  # apply str encoding
+                    t = tt.decode(st.cmap.encoding, "surrogatepass")  # apply str encoding
                 except Exception:
                     # the data does not match the expectation,
                     # we use the alternative ;
                     # text extraction may not be good
                     t = tt.decode(
-                        "utf-16-be" if cmap[0] == "charmap" else "charmap",
+                        "utf-16-be" if st.cmap.encoding == "charmap" else "charmap",
                         "surrogatepass",
                     )  # apply str encoding
             else:  # apply dict encoding
                 t = "".join(
-                    [cmap[0][x] if x in cmap[0] else bytes((x,)).decode() for x in tt]
+                    [st.cmap.encoding[x] if x in st.cmap.encoding else bytes((x,)).decode() for x in tt]
                 )
             # "\u0590 - \u08FF \uFB50 - \uFDFF"
-            for x in [cmap[1][x] if x in cmap[1] else x for x in t]:
+            for x in [st.cmap.map_dict[x] if x in st.cmap.map_dict else x for x in t]:
                 # x can be a sequence of bytes ; ex: habibi.pdf
                 if len(x) == 1:
                     xx = ord(x)
@@ -258,28 +288,28 @@ def handle_tj(
                     or 0x20A0 <= xx <= 0x21FF           # but (numbers) indices/exponents
                     or xx in CUSTOM_RTL_SPECIAL_CHARS   # customized....
                 ):
-                    text = x + text if rtl_dir else text + x
+                    text = x + text if st.rtl_dir else text + x
                 elif (  # right-to-left characters set
                     0x0590 <= xx <= 0x08FF
                     or 0xFB1D <= xx <= 0xFDFF
                     or 0xFE70 <= xx <= 0xFEFF
                     or CUSTOM_RTL_MIN <= xx <= CUSTOM_RTL_MAX
                 ):
-                    if not rtl_dir:
-                        rtl_dir = True
+                    if not st.rtl_dir:
+                        st.rtl_dir = True
                         output += text
                         if visitor_text is not None:
-                            visitor_text(text, cm_matrix, tm_matrix, cmap[3], font_size)
+                            visitor_text(text, st.copy())
                         text = ""
                     text = x + text
                 else:  # left-to-right
                     # print(">",xx,x,end="")
-                    if rtl_dir:
-                        rtl_dir = False
+                    if st.rtl_dir:
+                        st.rtl_dir = False
                         output += text
                         if visitor_text is not None:
-                            visitor_text(text, cm_matrix, tm_matrix, cmap[3], font_size)
+                            visitor_text(text, st.copy())
                         text = ""
                     text = text + x
                 # fmt: on
-    return text, rtl_dir
+    return text
