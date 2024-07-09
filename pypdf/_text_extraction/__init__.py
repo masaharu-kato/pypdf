@@ -77,6 +77,7 @@ class TextState:
         space_scale: float,
         _space_width: float,
         text_leading: float,
+        text_offset: float,
         rtl_dir: bool, # right-to-left
     ):
         self.cm_matrix = cm_matrix
@@ -87,6 +88,7 @@ class TextState:
         self.space_scale = space_scale
         self._space_width = _space_width
         self.text_leading = text_leading
+        self.text_offset = text_offset
         self.rtl_dir = rtl_dir  # right-to-left
     
     @property
@@ -94,7 +96,15 @@ class TextState:
         return self._space_width / 1000.0
 
     def pos(self) -> tuple[float, float]:
-        return xy_mult((self.tm_matrix[4], self.tm_matrix[5]), self.cm_matrix)
+        x, y = xy_mult((self.tm_matrix[4], self.tm_matrix[5]), self.cm_matrix)
+
+        if self.text_offset:
+            m = mult(self.tm_matrix, self.cm_matrix)
+            k = math.sqrt(abs(m[0] * m[3]) + abs(m[1] * m[2]))
+            x += self.text_offset * (self.font_size * k)
+
+        return x, y
+    
     
     def copy(self):
         return copy.copy(self)
@@ -162,8 +172,19 @@ def crlf_space_check(
     cmtm_prev: tuple[Mat, Mat],
     orientations: tuple[int, ...],
     output: str,
+    processing_TJ_op: bool,
     visitor_text: Optional[Callable[[str, TextState], None]],
 ) -> tuple[str, str, Mat, Mat]:
+    
+    def push_text():
+        nonlocal output, text
+        output += text + "\n"
+        if visitor_text is not None:
+            visitor_text(text + "\n", st.copy())
+        # if processing_TJ_op:
+        #     st.text_offset += len(text + "\n")
+        text = ""
+
     cm_prev = cmtm_prev[0]
     tm_prev = cmtm_prev[1]
 
@@ -181,10 +202,7 @@ def crlf_space_check(
         if orientation == 0:
             if delta_y < -0.8 * f:
                 if (output + text)[-1] != "\n":
-                    output += text + "\n"
-                    if visitor_text is not None:
-                        visitor_text(text + "\n", st.copy())
-                    text = ""
+                    push_text()
             elif (
                 abs(delta_y) < f * 0.3
                 and abs(delta_x) > st.space_width * f * 15
@@ -194,10 +212,7 @@ def crlf_space_check(
         elif orientation == 180:
             if delta_y > 0.8 * f:
                 if (output + text)[-1] != "\n":
-                    output += text + "\n"
-                    if visitor_text is not None:
-                        visitor_text(text + "\n", st.copy())
-                    text = ""
+                    push_text()
             elif (
                 abs(delta_y) < f * 0.3
                 and abs(delta_x) > st.space_width * f * 15
@@ -207,10 +222,7 @@ def crlf_space_check(
         elif orientation == 90:
             if delta_x > 0.8 * f:
                 if (output + text)[-1] != "\n":
-                    output += text + "\n"
-                    if visitor_text is not None:
-                        visitor_text(text + "\n", st.copy())
-                    text = ""
+                    push_text()
             elif (
                 abs(delta_x) < f * 0.3
                 and abs(delta_y) > st.space_width * f * 15
@@ -220,10 +232,7 @@ def crlf_space_check(
         elif orientation == 270:
             if delta_x < -0.8 * f:
                 if (output + text)[-1] != "\n":
-                    output += text + "\n"
-                    if visitor_text is not None:
-                        visitor_text(text + "\n", st.copy())
-                    text = ""
+                    push_text()
             elif (
                 abs(delta_x) < f * 0.3
                 and abs(delta_y) > st.space_width * f * 15
@@ -243,8 +252,19 @@ def handle_tj(
     st: TextState,
     orientations: tuple[int, ...],
     output: str,
+    processing_TJ_op: bool,
     visitor_text: Optional[Callable[[str, TextState], None]],
 ) -> str:
+    
+    def push_text():
+        nonlocal output, text
+        output += text
+        if visitor_text is not None:
+            visitor_text(text, st.copy())
+        if processing_TJ_op:
+            st.text_offset += len(text)
+        text = ""
+
     m = mult(st.tm_matrix, st.cm_matrix)
     orientation = orient(m)
     if orientation in orientations and len(operands) > 0:
@@ -297,19 +317,13 @@ def handle_tj(
                 ):
                     if not st.rtl_dir:
                         st.rtl_dir = True
-                        output += text
-                        if visitor_text is not None:
-                            visitor_text(text, st.copy())
-                        text = ""
+                        push_text()
                     text = x + text
                 else:  # left-to-right
                     # print(">",xx,x,end="")
                     if st.rtl_dir:
                         st.rtl_dir = False
-                        output += text
-                        if visitor_text is not None:
-                            visitor_text(text, st.copy())
-                        text = ""
+                        push_text()
                     text = text + x
                 # fmt: on
     return text
