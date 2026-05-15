@@ -4,11 +4,15 @@ Code related to text extraction.
 Some parts are still in _page.py. In doubt, they will stay there.
 """
 
-import copy
 import math
+import unicodedata
+from dataclasses import dataclass
 from typing import Any, Callable, Optional, Union
 
 from ..generic import DictionaryObject, TextStringObject, encode_pdfdocencoding
+
+W_CHAR_HAN = 0.67
+W_CHAR_ZEN = W_CHAR_HAN * 2
 
 CUSTOM_RTL_MIN: int = -1
 CUSTOM_RTL_MAX: int = -1
@@ -16,7 +20,7 @@ CUSTOM_RTL_SPECIAL_CHARS: list[int] = []
 LAYOUT_NEW_BT_GROUP_SPACE_WIDTHS: int = 5
 
 
-Mat = tuple[float, float, float, float, float, float]
+Mat = tuple[float, float, float, float, float, float]  # Matrix [[a, b, 0], [c, d, 0], [e, f, 1]]
 
 def mult(m: Mat, n: Mat) -> Mat:
     return (
@@ -31,29 +35,23 @@ def mult(m: Mat, n: Mat) -> Mat:
 def xy_mult(xy: tuple[float, float], mat: Mat) -> tuple[float, float]:
     x, y = xy  # [[x, y]]
     a, b, c, d, e, f = mat # [[a, b, 0], [c, d, 0], [e, f, 1]]
-    return (a*x + c*y + e, b*x + d*y + f)
+    return (a*x + b*y + e, c*x + d*y + f)
 
 
 class OrientationNotFoundError(Exception):
     pass
 
 
+@dataclass
 class CharMap:
     """
     (Added by Masaharu-Kato)
     Charactor-map data class for `extract_text` method in PageObject
     """
-    def __init__(
-        self,
-        encoding: str | dict[int, str],
-        map_dict: dict[str, str],
-        font_res_name: str, # internal name, not the real font-name
-        font_dict: dict | None, # The font-dictionary describes the font
-    ):
-        self.encoding = encoding
-        self.map_dict = map_dict
-        self.font_res_name = font_res_name
-        self.font_dict = font_dict
+    encoding: str | dict[int, str]
+    map_dict: dict[str, str]
+    font_res_name: str # internal name, not the real font-name
+    font_dict: dict | None # The font-dictionary describes the font
 
     def __str__(self):
         return self.font_res_name
@@ -62,52 +60,115 @@ class CharMap:
         return repr(self.font_dict)
 
 
+@dataclass
 class TextState:
     """
     (Added by Masaharu-Kato)
     Text state
     """
-    def __init__(
-        self,
-        cm_matrix: Mat,
-        tm_matrix: Mat,
-        charmap: CharMap,
-        font_size: float,
-        char_scale: float,
-        space_scale: float,
-        _space_width: float,
-        text_leading: float,
-        text_offset: float,
-        rtl_dir: bool, # right-to-left
-    ):
-        self.cm_matrix = cm_matrix
-        self.tm_matrix = tm_matrix
-        self.cmap = charmap
-        self.font_size = font_size
-        self.char_scale = char_scale
-        self.space_scale = space_scale
-        self._space_width = _space_width
-        self.text_leading = text_leading
-        self.text_offset = text_offset
-        self.rtl_dir = rtl_dir  # right-to-left
+    cm_matrix: Mat
+    tm_matrix: Mat
+    cmap: CharMap
+    font_size: float
+    char_scale: float  
+    char_spacing: float
+    space_scale: float  # 0.0 - 1.0
+    _space_width: float
+    text_leading: float
+    box_left: float  # text-box left (x-offset)
+    box_width: float  # text-box width
+    box_height: float  # text-box height
+    rtl_dir: bool # right-to-left
     
+
     @property
     def space_width(self):
         return self._space_width / 1000.0
 
-    def pos(self) -> tuple[float, float]:
-        x, y = xy_mult((self.tm_matrix[4], self.tm_matrix[5]), self.cm_matrix)
 
-        if self.text_offset:
-            m = mult(self.tm_matrix, self.cm_matrix)
-            k = math.sqrt(abs(m[0] * m[3]) + abs(m[1] * m[2]))
-            x += self.text_offset * (self.font_size * k)
+class TextBoxData:
+    def __init__(self, ts: TextState, text: str):
+        
+        # self._ts = ts
+        self._text = text
 
-        return x, y
+        m = mult(ts.tm_matrix, ts.cm_matrix)
+
+        tx, ty = 0.0, 0.0
+
+        direction = -1.0 if ts.rtl_dir else 1.0
+        tx += ts.box_left * direction
+
+        # テキスト空間の座標 (tx, ty) を行列 m によってデバイス空間へ変換する
+        self._x, self._y = xy_mult((tx, ty), m)
+        
+        # 4. 行列の「スケール成分」を抽出してデバイス空間の w, h に変換
+        # 行列 m から、X軸方向とY軸方向の純粋な拡大率（ベクトルの長さ）を計算します
+        scale_x = math.sqrt(m[0] ** 2 + m[1] ** 2)
+        scale_y = math.sqrt(m[2] ** 2 + m[3] ** 2)
+        
+        text_lines = self._text.split('\n')
+        _w = _calc_box_width(ts, text_lines)
+        _h = _calc_box_height(ts, len(text_lines))
+
+        self._w = _w * scale_x
+        self._h = _h * scale_y
+
+        self._space_width = (W_CHAR_HAN * ts.font_size + 2 * ts.char_spacing + ts.space_scale) * ts.char_scale * scale_x
+        self._space_height = (ts.font_size + 2 * ts.text_leading) * scale_y
+
+    # @property
+    # def text_state(self):
+    #     return self._ts
+
+    @property
+    def text(self):
+        return self._text
+
+    @property
+    def x(self):
+        return self._x
+
+    @property
+    def y(self):
+        return self._y
+
+    @property
+    def w(self):
+        return self._w
+
+    @property
+    def h(self):
+        return self._h
     
+    @property
+    def space_width(self):
+        return self._space_width
     
-    def copy(self):
-        return copy.copy(self)
+    @property
+    def space_height(self):
+        return self._space_height
+
+def _calc_box_width(ts: TextState, text_lines: list[str]):
+    return max(_calc_line_text_size(ts, line) for line in text_lines)
+
+def _calc_box_height(ts: TextState, n_lines: int):
+    return (n_lines - 1) * abs(ts.text_leading) + ts.font_size
+
+def _calc_line_text_size(ts: TextState, line_text: str):
+    total_w = 0.0
+    for i, ch in enumerate(line_text):
+
+        char_w = W_CHAR_ZEN if unicodedata.east_asian_width(ch) in ('W', 'F', 'A') else W_CHAR_HAN
+        total_w += char_w * ts.font_size
+        
+        # if i < len(line_text) - 1:
+        total_w += ts.char_spacing
+        # スペース文字（32）の後にのみ Tw を追加で適用
+        if ch == ' ':
+            total_w += ts.space_scale
+
+    return total_w * ts.char_scale
 
 
 def set_custom_rtl(
@@ -173,16 +234,18 @@ def crlf_space_check(
     orientations: tuple[int, ...],
     output: str,
     processing_TJ_op: bool,
-    visitor_text: Optional[Callable[[str, TextState], None]],
+    visitor_text: Callable[[TextBoxData], None] | None,
 ) -> tuple[str, str, Mat, Mat]:
     
     def push_text():
         nonlocal output, text
-        output += text + "\n"
+        text += "\n"
+        output += text
+        textbox = TextBoxData(st, text)
         if visitor_text is not None:
-            visitor_text(text + "\n", st.copy())
+            visitor_text(textbox)
         # if processing_TJ_op:
-        #     st.text_offset += len(text + "\n")
+        #     st.text_offset += textbox.w
         text = ""
 
     cm_prev = cmtm_prev[0]
@@ -248,21 +311,22 @@ def crlf_space_check(
 
 def handle_tj(
     text: str,
-    operands: list[Union[str, TextStringObject]],
+    operands: list[str | TextStringObject],
     st: TextState,
     orientations: tuple[int, ...],
     output: str,
     processing_TJ_op: bool,
-    visitor_text: Optional[Callable[[str, TextState], None]],
+    visitor_text: Callable[[TextBoxData], None] | None,
 ) -> str:
     
     def push_text():
         nonlocal output, text
         output += text
+        textbox = TextBoxData(st, text)
         if visitor_text is not None:
-            visitor_text(text, st.copy())
+            visitor_text(textbox)
         if processing_TJ_op:
-            st.text_offset += len(text)
+            st.box_left += textbox.w
         text = ""
 
     m = mult(st.tm_matrix, st.cm_matrix)
