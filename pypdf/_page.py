@@ -35,19 +35,10 @@ DEFAULT_SPACE_WIDTH = 500.0
 import copy
 import math
 import sys
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from decimal import Decimal
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Iterable,
-    Iterator,
-    Optional,
-    Sequence,
-    Union,
-    cast,
-    overload,
-)
+from typing import Any, cast, overload
 
 from ._cmap import build_char_map, unknown_char_map
 from ._protocols import PdfCommonDocProtocol
@@ -99,7 +90,7 @@ MERGE_CROP_BOX = "cropbox"  # pypdf<=3.4.0 used 'trimbox'
 
 
 def _get_rectangle(self: Any, name: str, defaults: Iterable[str]) -> RectangleObject:
-    retval: Union[None, RectangleObject, IndirectObject] = self.get(name)
+    retval: None | RectangleObject | IndirectObject = self.get(name)
     if isinstance(retval, RectangleObject):
         return retval
     if retval is None:
@@ -114,7 +105,7 @@ def _get_rectangle(self: Any, name: str, defaults: Iterable[str]) -> RectangleOb
     return retval
 
 
-def _set_rectangle(self: Any, name: str, value: Union[RectangleObject, float]) -> None:
+def _set_rectangle(self: Any, name: str, value: RectangleObject | float) -> None:
     name = NameObject(name)
     self[name] = value
 
@@ -230,7 +221,7 @@ class Transformation:
         return Transformation(ctm=(m[0], m[1], m[2], m[3], m[4] + tx, m[5] + ty))
 
     def scale(
-        self, sx: Optional[float] = None, sy: Optional[float] = None
+        self, sx: float | None = None, sy: float | None = None
     ) -> "Transformation":
         """
         Scale the contents of a page towards the origin of the coordinate system.
@@ -291,9 +282,9 @@ class Transformation:
 
     def apply_on(
         self,
-        pt: Union[tuple[float, float], list[float]],
+        pt: tuple[float, float] | list[float],
         as_object: bool = False,
-    ) -> Union[tuple[float, float], list[float]]:
+    ) -> tuple[float, float] | list[float]:
         """
         Apply the transformation matrix on the given point.
 
@@ -331,13 +322,13 @@ class PageObject(DictionaryObject):
 
     def __init__(
         self,
-        pdf: Optional[PdfCommonDocProtocol] = None,
-        indirect_reference: Optional[IndirectObject] = None,
+        pdf: PdfCommonDocProtocol | None = None,
+        indirect_reference: IndirectObject | None = None,
     ) -> None:
         DictionaryObject.__init__(self)
         self.pdf = pdf
-        self.inline_images: Optional[dict[str, ImageFile]] = None
-        # below Union for mypy but actually Optional[list[str]]
+        self.inline_images: dict[str, ImageFile] | None = None
+        # below Union for mypy but actually list[str] | None
         self.indirect_reference = indirect_reference
 
     def hash_value_data(self) -> bytes:
@@ -358,9 +349,9 @@ class PageObject(DictionaryObject):
 
     @staticmethod
     def create_blank_page(
-        pdf: Optional[PdfCommonDocProtocol] = None,
-        width: Union[float, Decimal, None] = None,
-        height: Union[float, Decimal, None] = None,
+        pdf: PdfCommonDocProtocol | None = None,
+        width: float | Decimal | None = None,
+        height: float | Decimal | None = None,
     ) -> "PageObject":
         """
         Return a new blank page.
@@ -430,10 +421,10 @@ class PageObject(DictionaryObject):
 
     def _get_ids_image(
         self,
-        obj: Optional[DictionaryObject] = None,
-        ancest: Optional[list[str]] = None,
-        call_stack: Optional[list[Any]] = None,
-    ) -> list[Union[str, list[str]]]:
+        obj: DictionaryObject | None = None,
+        ancest: list[str] | None = None,
+        call_stack: list[Any] | None = None,
+    ) -> list[str | list[str]]:
         if call_stack is None:
             call_stack = []
         _i = getattr(obj, "indirect_reference", None)
@@ -447,7 +438,7 @@ class PageObject(DictionaryObject):
             obj = self
         if ancest is None:
             ancest = []
-        lst: list[Union[str, list[str]]] = []
+        lst: list[str | list[str]] = []
         if PG.RESOURCES not in obj or RES.XOBJECT not in cast(
             DictionaryObject, obj[PG.RESOURCES]
         ):
@@ -467,8 +458,8 @@ class PageObject(DictionaryObject):
 
     def _get_image(
         self,
-        id: Union[str, list[str], tuple[str]],
-        obj: Optional[DictionaryObject] = None,
+        id: str | list[str] | tuple[str],
+        obj: DictionaryObject | None = None,
     ) -> ImageFile:
         if obj is None:
             obj = cast(DictionaryObject, self)
@@ -818,7 +809,7 @@ class PageObject(DictionaryObject):
     def _content_stream_rename(
         stream: ContentStream,
         rename: dict[Any, Any],
-        pdf: Optional[PdfCommonDocProtocol],
+        pdf: PdfCommonDocProtocol | None,
     ) -> ContentStream:
         if not rename:
             return stream
@@ -839,7 +830,7 @@ class PageObject(DictionaryObject):
     @staticmethod
     def _add_transformation_matrix(
         contents: Any,
-        pdf: Optional[PdfCommonDocProtocol],
+        pdf: PdfCommonDocProtocol | None,
         ctm: CompressedTransformationMatrix,
     ) -> ContentStream:
         """Add transformation matrix at the beginning of the given contents stream."""
@@ -861,7 +852,7 @@ class PageObject(DictionaryObject):
         )
         return contents
 
-    def _get_contents_as_bytes(self) -> Optional[bytes]:
+    def _get_contents_as_bytes(self) -> bytes | None:
         """
         Return the page contents as bytes.
 
@@ -878,7 +869,7 @@ class PageObject(DictionaryObject):
         else:
             return None
 
-    def get_contents(self) -> Optional[ContentStream]:
+    def get_contents(self) -> ContentStream | None:
         """
         Access the page contents.
 
@@ -900,7 +891,7 @@ class PageObject(DictionaryObject):
             return None
 
     def replace_contents(
-        self, content: Union[None, ContentStream, EncodedStreamObject, ArrayObject]
+        self, content: None | ContentStream | EncodedStreamObject | ArrayObject
     ) -> None:
         """
         Replace the page contents with the new content and nullify old objects
@@ -982,8 +973,8 @@ class PageObject(DictionaryObject):
     def _merge_page(
         self,
         page2: "PageObject",
-        page2transformation: Optional[Callable[[Any], ContentStream]] = None,
-        ctm: Optional[CompressedTransformationMatrix] = None,
+        page2transformation: Callable[[Any], ContentStream] | None = None,
+        ctm: CompressedTransformationMatrix | None = None,
         over: bool = True,
         expand: bool = False,
     ) -> None:
@@ -1094,8 +1085,8 @@ class PageObject(DictionaryObject):
     def _merge_page_writer(
         self,
         page2: "PageObject",
-        page2transformation: Optional[Callable[[Any], ContentStream]] = None,
-        ctm: Optional[CompressedTransformationMatrix] = None,
+        page2transformation: Callable[[Any], ContentStream] | None = None,
+        ctm: CompressedTransformationMatrix | None = None,
         over: bool = True,
         expand: bool = False,
     ) -> None:
@@ -1231,7 +1222,7 @@ class PageObject(DictionaryObject):
         # self[NameObject(PG.ANNOTS)] = new_annots
 
     def _expand_mediabox(
-        self, page2: "PageObject", ctm: Optional[CompressedTransformationMatrix]
+        self, page2: "PageObject", ctm: CompressedTransformationMatrix | None
     ) -> None:
         corners1 = (
             self.mediabox.left.as_numeric(),
@@ -1276,7 +1267,7 @@ class PageObject(DictionaryObject):
     def merge_transformed_page(
         self,
         page2: "PageObject",
-        ctm: Union[CompressedTransformationMatrix, Transformation],
+        ctm: CompressedTransformationMatrix | Transformation,
         over: bool = True,
         expand: bool = False,
     ) -> None:
@@ -1367,7 +1358,7 @@ class PageObject(DictionaryObject):
 
     def add_transformation(
         self,
-        ctm: Union[Transformation, CompressedTransformationMatrix],
+        ctm: Transformation | CompressedTransformationMatrix,
         expand: bool = False,
     ) -> None:
         """
@@ -1517,7 +1508,7 @@ class PageObject(DictionaryObject):
                     raise ValueError("Page must be part of a PdfWriter")
 
     @property
-    def page_number(self) -> Optional[int]:
+    def page_number(self) -> int | None:
         """
         Read-only property which returns the page number within the PDF file.
 
@@ -1595,7 +1586,7 @@ class PageObject(DictionaryObject):
         cmaps: dict[
             str,
             tuple[
-                str, float, Union[str, dict[int, str]], dict[str, str], DictionaryObject
+                str, float, str | dict[int, str], dict[str, str], DictionaryObject
             ],
         ] = {}
         try:
@@ -1905,7 +1896,7 @@ class PageObject(DictionaryObject):
         space_vertically: bool = True,
         scale_weight: float = 1.25,
         strip_rotated: bool = True,
-        debug_path: Optional[Path] = None,
+        debug_path: Path | None = None,
     ) -> str:
         """
         Get text preserving fidelity to source PDF text layout.
@@ -1975,7 +1966,7 @@ class PageObject(DictionaryObject):
     def extract_text(
         self,
         *args: Any,
-        orientations: Union[int, tuple[int, ...]] = (0, 90, 180, 270),
+        orientations: int | tuple[int, ...] = (0, 90, 180, 270),
         space_width: float = 200.0,
         visitor_operand_before: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_operand_after: Callable[[Any, Any, Any, Any], None] | None = None,
@@ -2168,14 +2159,14 @@ class PageObject(DictionaryObject):
     content as intended by the page's creator."""
 
     @property
-    def annotations(self) -> Optional[ArrayObject]:
+    def annotations(self) -> ArrayObject | None:
         if "/Annots" not in self:
             return None
         else:
             return cast(ArrayObject, self["/Annots"])
 
     @annotations.setter
-    def annotations(self, value: Optional[ArrayObject]) -> None:
+    def annotations(self, value: ArrayObject | None) -> None:
         """
         set the annotations array of the page.
 
@@ -2211,8 +2202,8 @@ class _VirtualList(Sequence[PageObject]):
         ...
 
     def __getitem__(
-        self, index: Union[int, slice]
-    ) -> Union[PageObject, Sequence[PageObject]]:
+        self, index: int | slice
+    ) -> PageObject | Sequence[PageObject]:
         if isinstance(index, slice):
             indices = range(*index.indices(len(self)))
             cls = type(self)
@@ -2227,7 +2218,7 @@ class _VirtualList(Sequence[PageObject]):
             raise IndexError("sequence index out of range")
         return self.get_function(index)
 
-    def __delitem__(self, index: Union[int, slice]) -> None:
+    def __delitem__(self, index: int | slice) -> None:
         if isinstance(index, slice):
             r = list(range(*index.indices(len(self))))
             # pages have to be deleted from last to first
@@ -2380,8 +2371,8 @@ def _get_fonts_walk(
 class _VirtualListImages(Sequence[ImageFile]):
     def __init__(
         self,
-        ids_function: Callable[[], list[Union[str, list[str]]]],
-        get_function: Callable[[Union[str, list[str], tuple[str]]], ImageFile],
+        ids_function: Callable[[], list[str | list[str]]],
+        get_function: Callable[[str | list[str] | tuple[str]], ImageFile],
     ) -> None:
         self.ids_function = ids_function
         self.get_function = get_function
@@ -2390,14 +2381,14 @@ class _VirtualListImages(Sequence[ImageFile]):
     def __len__(self) -> int:
         return len(self.ids_function())
 
-    def keys(self) -> list[Union[str, list[str]]]:
+    def keys(self) -> list[str | list[str]]:
         return self.ids_function()
 
-    def items(self) -> list[tuple[Union[str, list[str]], ImageFile]]:
+    def items(self) -> list[tuple[str | list[str], ImageFile]]:
         return [(x, self[x]) for x in self.ids_function()]
 
     @overload
-    def __getitem__(self, index: Union[int, str, list[str]]) -> ImageFile:
+    def __getitem__(self, index: int | str | list[str]) -> ImageFile:
         ...
 
     @overload
@@ -2405,8 +2396,8 @@ class _VirtualListImages(Sequence[ImageFile]):
         ...
 
     def __getitem__(
-        self, index: Union[int, slice, str, list[str], tuple[str]]
-    ) -> Union[ImageFile, Sequence[ImageFile]]:
+        self, index: int | slice | str | list[str] | tuple[str]
+    ) -> ImageFile | Sequence[ImageFile]:
         lst = self.ids_function()
         if isinstance(index, slice):
             indices = range(*index.indices(len(self)))

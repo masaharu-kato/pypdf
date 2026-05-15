@@ -6,10 +6,10 @@ Some parts are still in _page.py. In doubt, they will stay there.
 
 import math
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Union
 
-from ..generic import DictionaryObject, TextStringObject, encode_pdfdocencoding
+from ..generic import TextStringObject, encode_pdfdocencoding
 
 W_CHAR_HAN = 0.67
 W_CHAR_ZEN = W_CHAR_HAN * 2
@@ -172,9 +172,9 @@ def _calc_line_text_size(ts: TextState, line_text: str):
 
 
 def set_custom_rtl(
-    _min: Union[str, int, None] = None,
-    _max: Union[str, int, None] = None,
-    specials: Union[str, list[int], None] = None,
+    _min: str | int | None = None,
+    _max: str | int | None = None,
+    specials: str | list[int] | None = None,
 ) -> tuple[int, int, list[int]]:
     """
     Change the Right-To-Left and special characters custom parameters.
