@@ -53,9 +53,7 @@ from ._cmap import build_char_map, unknown_char_map
 from ._protocols import PdfCommonDocProtocol
 from ._text_extraction import (
     TextBoxData,
-    OrientationNotFoundError,
     _layout_mode,
-    crlf_space_check,
     handle_tj,
     mult,
     Mat,
@@ -1684,7 +1682,6 @@ class PageObject(DictionaryObject):
             if not processing_TJ_op:
                 ts.box_left = 0.0
 
-            check_crlf_space: bool = False
             # Table 5.4 page 405
             if operator == b"BT":
                 ts.tm_matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
@@ -1757,7 +1754,6 @@ class PageObject(DictionaryObject):
                     pass  # keep previous size
             # Table 5.5 page 406
             elif operator == b"Td":
-                # check_crlf_space = True
                 # A special case is a translating only tm:
                 # tm[0..5] = 1 0 0 1 e f,
                 # i.e. tm[4] += tx, tm[5] += ty.
@@ -1769,7 +1765,6 @@ class PageObject(DictionaryObject):
                     ts.tm_matrix[5] + tx * ts.tm_matrix[1] + ty * ts.tm_matrix[3],
                 )
             elif operator == b"Tm":
-                # check_crlf_space = True
                 ts.tm_matrix = (
                     float(operands[0]),
                     float(operands[1]),
@@ -1779,11 +1774,9 @@ class PageObject(DictionaryObject):
                     float(operands[5]),
                 )
             elif operator == b"T*":
-                # check_crlf_space = True
                 ts.tm_matrix = (*ts.tm_matrix[0:5], ts.tm_matrix[5] - ts.text_leading)
 
             elif operator == b"Tj":
-                check_crlf_space = False # True
                 text = handle_tj(
                     text,
                     operands,
@@ -1796,23 +1789,6 @@ class PageObject(DictionaryObject):
 
             else:
                 return None
-            if check_crlf_space:
-                try:
-                    text, output, cm_prev, tm_prev = crlf_space_check(
-                        text,
-                        ts,
-                        (cm_prev, tm_prev),
-                        orientations,
-                        output,
-                        processing_TJ_op,
-                        visitor_text,
-                    )
-                    if text == "":
-                        pass
-                        # basedata.memo_cm = cm_matrix.copy()
-                        # basedata.memo_tm = tm_matrix.copy()
-                except OrientationNotFoundError:
-                    return None
                 
         for operands, operator in content.operations:
             # print("op", operands, operator)
