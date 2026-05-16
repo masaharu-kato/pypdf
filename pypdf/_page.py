@@ -1968,8 +1968,8 @@ class PageObject(DictionaryObject):
 
     def extract_texts(
         self,
-        *,
-        verbose = False,
+        *args, 
+        **kwargs
     ):
         
         textboxes: list[TextBoxData] = []
@@ -1977,7 +1977,7 @@ class PageObject(DictionaryObject):
         def _visitor_text(textbox):
             textboxes.append(textbox)
         
-        self.extract_text(visitor_text=_visitor_text, verbose=verbose)
+        self.extract_text(*args, visitor_text=_visitor_text, **kwargs)
 
         return textboxes
 
