@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from ..generic import TextStringObject, encode_pdfdocencoding
 
-W_CHAR_HAN = 0.67
+W_CHAR_HAN = 0.5
 W_CHAR_ZEN = W_CHAR_HAN * 2
 
 CUSTOM_RTL_MIN: int = -1
