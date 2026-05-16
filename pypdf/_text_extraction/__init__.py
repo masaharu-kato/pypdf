@@ -84,7 +84,7 @@ class TextState:
         return self._space_width / 1000.0
 
 
-class TextBoxData:
+class TextBox:
     def __init__(self, ts: TextState, text: str):
         
         # self._ts = ts
@@ -245,7 +245,7 @@ def handle_tj(
     orientations: tuple[int, ...],
     # output: str,
     # processing_TJ_op: bool,
-    visitor_text: Callable[[TextBoxData], None] | None,
+    visitor_text: Callable[[TextBox], None] | None,
     verbose = False,
 ) -> str:
     
@@ -254,7 +254,7 @@ def handle_tj(
         if not text:
             return
         # output += text
-        textbox = TextBoxData(ts, text)
+        textbox = TextBox(ts, text)
         if verbose:
             print("    push_text (in handle_tj)", textbox)
         if visitor_text is not None:

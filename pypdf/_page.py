@@ -45,7 +45,7 @@ from typing import Any, cast, overload
 from ._cmap import build_char_map, unknown_char_map
 from ._protocols import PdfCommonDocProtocol
 from ._text_extraction import (
-    TextBoxData,
+    TextBox,
     _layout_mode,
     handle_tj,
     mult,
@@ -1573,7 +1573,7 @@ class PageObject(DictionaryObject):
         content_key: str | None = PG.CONTENTS,
         visitor_operand_before: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_operand_after: Callable[[Any, Any, Any, Any], None] | None = None,
-        visitor_text: Callable[[TextBoxData], None] | None = None,
+        visitor_text: Callable[[TextBox], None] | None = None,
         verbose = False,
     ):
         """
@@ -1655,7 +1655,7 @@ class PageObject(DictionaryObject):
             if not text:
                 return
             # output += text
-            textbox = TextBoxData(ts, text)
+            textbox = TextBox(ts, text)
             if verbose:
                 print("        push_text", textbox)
             if visitor_text is not None:
@@ -1989,7 +1989,7 @@ class PageObject(DictionaryObject):
         **kwargs
     ):
         
-        textboxes: list[TextBoxData] = []
+        textboxes: list[TextBox] = []
 
         def _visitor_text(textbox):
             textboxes.append(textbox)
@@ -2006,7 +2006,7 @@ class PageObject(DictionaryObject):
         space_width: float = 200.0,
         visitor_operand_before: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_operand_after: Callable[[Any, Any, Any, Any], None] | None = None,
-        visitor_text: Callable[[TextBoxData], None] | None = None,
+        visitor_text: Callable[[TextBox], None] | None = None,
         extraction_mode: Literal["plain", "layout"] = "plain",
         verbose = False,
         **kwargs: Any,
@@ -2122,7 +2122,7 @@ class PageObject(DictionaryObject):
         space_width: float = 200.0,
         visitor_operand_before: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_operand_after: Callable[[Any, Any, Any, Any], None] | None = None,
-        visitor_text: Callable[[TextBoxData], None] | None = None,
+        visitor_text: Callable[[TextBox], None] | None = None,
         verbose = False,
     ):
         """
