@@ -31,6 +31,8 @@
 DEFAULT_FONT_SIZE = 12.0
 DEFAULT_SPACE_WIDTH = 500.0
 
+COMBINE_BYTES_IN_TJ = True
+
 
 import copy
 import math
@@ -1792,17 +1794,22 @@ class PageObject(DictionaryObject):
             elif operator == b"TD":
                 process_operation(b"TL", [-operands[1]])
                 process_operation(b"Td", operands)
+
             elif operator == b"TJ":
+                text = ""
+
                 for op in operands[0]:
                     if isinstance(op, (str, bytes)):
-                        text = handle_tj(
+                        text += handle_tj(
                             [op],
                             ts,
                             orientations,
                             visitor_text,
                             verbose=verbose,
                         )
-                        push_text(text, in_TJ_op=True)
+                        if not COMBINE_BYTES_IN_TJ:
+                            push_text(text, in_TJ_op=True)
+                            text = ""
 
                     if isinstance(op, (int, float, NumberObject, FloatObject)):
                     # and (
@@ -1810,13 +1817,22 @@ class PageObject(DictionaryObject):
                     #     and (len(text) > 0)
                     #     and (text[-1] != " ")
                     # ):
+                        if COMBINE_BYTES_IN_TJ and text:
+                            push_text(text, in_TJ_op=True)
+                            text = ""
+
                         d_box_left = -(float(op) / 1000.0) * ts.font_size * ts.char_scale
-                        # push_text()
                         # if verbose:
                         #     print('        d_box_left:', d_box_left)
                         ts.box_left += d_box_left
                         # process_operation(b"Tj", [" "])
-                ts.box_left = 0.0
+
+                if COMBINE_BYTES_IN_TJ and text:
+                    push_text(text, in_TJ_op=True)
+                    text = ""
+
+                ts.box_left = 0.0  # Reset offset
+
             elif operator == b'Tj':
                 text = handle_tj(
                     operands,
@@ -1865,6 +1881,7 @@ class PageObject(DictionaryObject):
 
             else:
                 process_operation(operator, operands)
+
             if visitor_operand_after is not None:
                 visitor_operand_after(operator, operands, ts.cm_matrix, ts.tm_matrix)
         # output += text  # just in case of
