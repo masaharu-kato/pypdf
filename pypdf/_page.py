@@ -1572,7 +1572,8 @@ class PageObject(DictionaryObject):
         visitor_operand_before: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_operand_after: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_text: Callable[[TextBoxData], None] | None = None,
-    ) -> str:
+        verbose = False,
+    ):
         """
         See extract_text for most arguments.
 
@@ -1581,8 +1582,7 @@ class PageObject(DictionaryObject):
                 None = the object; this allow to reuse the function on XObject
                 default = "/Content"
         """
-        text: str = ""
-        output: str = ""
+        # output: str = ""
         cmaps: dict[
             str,
             tuple[
@@ -1600,7 +1600,7 @@ class PageObject(DictionaryObject):
         except Exception:
             # no resources means no text is possible (no font) we consider the
             # file as not damaged, no need to check for TJ or Tj
-            return ""
+            return False # ""
         if "/Font" in resources_dict:
             for f in cast(DictionaryObject, resources_dict["/Font"]):
                 cmaps[f] = build_char_map(f, space_width, obj)
@@ -1612,7 +1612,7 @@ class PageObject(DictionaryObject):
             if not isinstance(content, ContentStream):
                 content = ContentStream(content, pdf, "bytes")
         except KeyError:  # it means no content can be extracted(certainly empty page)
-            return ""
+            return False # ""
         # Note: we check all strings are TextStringObjects. ByteStringObjects
         # are strings where the byte->string encoding was unknown, so adding
         # them to the text here would be gibberish.
@@ -1640,47 +1640,49 @@ class PageObject(DictionaryObject):
             _space_width = DEFAULT_SPACE_WIDTH,  # will be set correctly at first Tf
             text_leading = 0.0,
             box_left = 0.0,
-            box_width = 0.0,  # will be set on `push_text()`
-            box_height = 0.0,  # will be set on `push_text()`
             rtl_dir=False,
         )
         state_stack: list[TextState] = []
-
-        processing_TJ_op = False
 
         # memo_cm/tm will be used to store the position at the beginning of building the text
         # memo_cm: list[float] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
         # memo_tm: list[float] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
         # font_size = 12.0  # init just in case of
         
-        def push_text():
-            nonlocal output, text
-            output += text
+        def push_text(text: str, *, in_TJ_op: bool):
+            if not text:
+                return
+            # output += text
             textbox = TextBoxData(ts, text)
+            if verbose:
+                print("        push_text", textbox)
             if visitor_text is not None:
                 visitor_text(textbox)
-            if processing_TJ_op:
-                ts.box_left += textbox.w
-            text = ""
+            if in_TJ_op:
+                ts.box_left += textbox.raw_w
+            # text = ""
 
 
         def process_operation(operator: bytes, operands: list[Any]) -> None:
             nonlocal ts, state_stack, cm_prev, tm_prev
-            nonlocal orientations, visitor_text, output, text, processing_TJ_op
+            nonlocal orientations, visitor_text #, output, text, processing_TJ_op
             global CUSTOM_RTL_MIN, CUSTOM_RTL_MAX, CUSTOM_RTL_SPECIAL_CHARS
 
+            if verbose:
+                print("op L", operator, operands)
 
-            if not processing_TJ_op:
-                ts.box_left = 0.0
+            # if not processing_TJ_op:
+            #     ts.box_left = 0.0
 
             # Table 5.4 page 405
             if operator == b"BT":
                 ts.tm_matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
-                output += text
-                push_text()
+                # output += text
+                # push_text()
                 return None
             elif operator == b"ET":
-                push_text()
+                """ """
+                # push_text()
             # table 4.7 "Graphics state operators", page 219
             # cm_matrix calculation is a reserved for the moment
             elif operator == b"q":
@@ -1692,7 +1694,7 @@ class PageObject(DictionaryObject):
                 except Exception:
                     ts.cm_matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
             elif operator == b"cm":
-                push_text()
+                # push_text()
                 ts.cm_matrix = mult(
                     (
                         float(operands[0]),
@@ -1714,9 +1716,7 @@ class PageObject(DictionaryObject):
             elif operator == b"Tc":
                 ts.char_spacing = float(operands[0])
             elif operator == b"Tf":
-                if text != "":
-                    push_text()
-                text = ""
+                # push_text()
                 try:
                     # charMapTuple: font_type, float(sp_width / 2), encoding,
                     #               map_dict, font-dictionary
@@ -1768,21 +1768,16 @@ class PageObject(DictionaryObject):
                 ts.tm_matrix = (*ts.tm_matrix[0:5], ts.tm_matrix[5] - ts.text_leading)
 
             elif operator == b"Tj":
-                text = handle_tj(
-                    text,
-                    operands,
-                    ts,
-                    orientations,
-                    output,
-                    processing_TJ_op,
-                    visitor_text,
-                )
+                raise RuntimeError("Tj operator is not supported in this function. Use `handle_tj`.")
 
             else:
                 return None
                 
         for operands, operator in content.operations:
-            # print("op", operands, operator)
+
+            if verbose:
+                print("op  ", operator, operands)
+
             if visitor_operand_before is not None:
                 visitor_operand_before(operator, operands, ts.cm_matrix, ts.tm_matrix)
             # multiple operators are defined in here ####
@@ -1798,30 +1793,51 @@ class PageObject(DictionaryObject):
                 process_operation(b"TL", [-operands[1]])
                 process_operation(b"Td", operands)
             elif operator == b"TJ":
-                processing_TJ_op = True
                 for op in operands[0]:
                     if isinstance(op, (str, bytes)):
-                        process_operation(b"Tj", [op])
+                        text = handle_tj(
+                            [op],
+                            ts,
+                            orientations,
+                            visitor_text,
+                            verbose=verbose,
+                        )
+                        push_text(text, in_TJ_op=True)
+
                     if isinstance(op, (int, float, NumberObject, FloatObject)):
                     # and (
                     #     (abs(float(op)) >= st._space_width)
                     #     and (len(text) > 0)
                     #     and (text[-1] != " ")
                     # ):
-                        push_text()
-                        ts.box_left += -(float(op) / 1000.0) * ts.font_size * ts.char_scale
+                        d_box_left = -(float(op) / 1000.0) * ts.font_size * ts.char_scale
+                        # push_text()
+                        # if verbose:
+                        #     print('        d_box_left:', d_box_left)
+                        ts.box_left += d_box_left
                         # process_operation(b"Tj", [" "])
+                ts.box_left = 0.0
+            elif operator == b'Tj':
+                text = handle_tj(
+                    operands,
+                    ts,
+                    orientations,
+                    visitor_text,
+                    verbose=verbose,
+                )
+                push_text(text, in_TJ_op=False)
+
             elif operator == b"Do":
-                output += text
-                if visitor_text is not None:
-                    visitor_text(TextBoxData(ts, text))
-                try:
-                    if output[-1] != "\n":
-                        output += "\n"
-                        if visitor_text is not None:
-                            visitor_text(TextBoxData(ts, "\n"))
-                except IndexError:
-                    pass
+                # output += text
+                # if visitor_text is not None:
+                #     visitor_text(TextBoxData(ts, text))
+                # try:
+                #     if output[-1] != "\n":
+                #         output += "\n"
+                #         if visitor_text is not None:
+                #             visitor_text(TextBoxData(ts, "\n"))
+                # except IndexError:
+                #     pass
                 try:
                     xobj = resources_dict["/XObject"]
                     if xobj[operands[0]]["/Subtype"] != "/Image":  # type: ignore
@@ -1833,16 +1849,17 @@ class PageObject(DictionaryObject):
                             visitor_operand_after,
                             visitor_text,
                         )
-                        output += text
-                        if visitor_text is not None:
-                            visitor_text(TextBoxData(ts, text))
+                        # output += text
+                        # if visitor_text is not None:
+                        #     visitor_text(TextBoxData(ts, text))
                 except Exception:
                     logger_warning(
                         f" impossible to decode XFormObject {operands[0]}",
                         __name__,
                     )
                 finally:
-                    text = ""
+                    """ """
+                    # text = ""
                     # basedata.memo_cm = cm_matrix.copy()
                     # basedata.memo_tm = tm_matrix.copy()
 
@@ -1850,11 +1867,11 @@ class PageObject(DictionaryObject):
                 process_operation(operator, operands)
             if visitor_operand_after is not None:
                 visitor_operand_after(operator, operands, ts.cm_matrix, ts.tm_matrix)
-        output += text  # just in case of
-        if text != "" and visitor_text is not None:
-            visitor_text(text, ts.copy())
-        processing_TJ_op = False
-        return output
+        # output += text  # just in case of
+        # # if text != "" and visitor_text is not None:
+        # #     visitor_text(text, ts.copy())
+        # return output
+        return True
 
     def _layout_mode_fonts(self) -> dict[str, _layout_mode.Font]:
         """
@@ -1950,7 +1967,9 @@ class PageObject(DictionaryObject):
     
 
     def extract_texts(
-        self
+        self,
+        *,
+        verbose = False,
     ):
         
         textboxes: list[TextBoxData] = []
@@ -1958,7 +1977,7 @@ class PageObject(DictionaryObject):
         def _visitor_text(textbox):
             textboxes.append(textbox)
         
-        self.extract_text(visitor_text=_visitor_text)
+        self.extract_text(visitor_text=_visitor_text, verbose=verbose)
 
         return textboxes
 
@@ -1972,8 +1991,9 @@ class PageObject(DictionaryObject):
         visitor_operand_after: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_text: Callable[[TextBoxData], None] | None = None,
         extraction_mode: Literal["plain", "layout"] = "plain",
+        verbose = False,
         **kwargs: Any,
-    ) -> str:
+    ):
         """
         Locate all text drawing commands, in the order they are provided in the
         content stream, and extract the text.
@@ -2075,6 +2095,7 @@ class PageObject(DictionaryObject):
             visitor_operand_before,
             visitor_operand_after,
             visitor_text,
+            verbose=verbose,
         )
 
     def extract_xform_text(
@@ -2085,7 +2106,8 @@ class PageObject(DictionaryObject):
         visitor_operand_before: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_operand_after: Callable[[Any, Any, Any, Any], None] | None = None,
         visitor_text: Callable[[TextBoxData], None] | None = None,
-    ) -> str:
+        verbose = False,
+    ):
         """
         Extract text from an XObject.
 
@@ -2108,7 +2130,8 @@ class PageObject(DictionaryObject):
             None,
             visitor_operand_before,
             visitor_operand_after,
-            visitor_text,
+            visitor_text=visitor_text,
+            verbose=verbose,
         )
 
     def _get_fonts(self) -> tuple[set[str], set[str]]:

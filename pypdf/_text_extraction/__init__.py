@@ -76,8 +76,6 @@ class TextState:
     _space_width: float
     text_leading: float
     box_left: float  # text-box left (x-offset)
-    box_width: float  # text-box width
-    box_height: float  # text-box height
     rtl_dir: bool # right-to-left
     
 
@@ -102,17 +100,17 @@ class TextBoxData:
         # テキスト空間の座標 (tx, ty) を行列 m によってデバイス空間へ変換する
         self._x, self._y = xy_mult((tx, ty), m)
         
-        # 4. 行列の「スケール成分」を抽出してデバイス空間の w, h に変換
+        # 行列の「スケール成分」を抽出してデバイス空間の w, h に変換
         # 行列 m から、X軸方向とY軸方向の純粋な拡大率（ベクトルの長さ）を計算します
         scale_x = math.sqrt(m[0] ** 2 + m[1] ** 2)
         scale_y = math.sqrt(m[2] ** 2 + m[3] ** 2)
         
         text_lines = self._text.split('\n')
-        _w = _calc_box_width(ts, text_lines)
-        _h = _calc_box_height(ts, len(text_lines))
+        self._raw_w = _calc_box_width(ts, text_lines)
+        self._raw_h = _calc_box_height(ts, len(text_lines))
 
-        self._w = _w * scale_x
-        self._h = _h * scale_y
+        self._w = self._raw_w * scale_x
+        self._h = self._raw_h * scale_y
 
         self._space_width = (W_CHAR_HAN * ts.font_size + 2 * ts.char_spacing + ts.space_scale) * ts.char_scale * scale_x
         self._space_height = (ts.font_size + 2 * ts.text_leading) * scale_y
@@ -134,6 +132,14 @@ class TextBoxData:
         return self._y
 
     @property
+    def raw_w(self):
+        return self._raw_w
+
+    @property
+    def raw_h(self):
+        return self._raw_h
+
+    @property
     def w(self):
         return self._w
 
@@ -148,6 +154,11 @@ class TextBoxData:
     @property
     def space_height(self):
         return self._space_height
+    
+    def __repr__(self):
+        return f'TextBoxData((x={self.x}, y={self.y}, w={self.w}, h={self.h}), "{self.text}")'
+
+
 
 def _calc_box_width(ts: TextState, text_lines: list[str]):
     return max(_calc_line_text_size(ts, line) for line in text_lines)
@@ -228,54 +239,58 @@ def orient(m: Mat) -> int:
 
 
 def handle_tj(
-    text: str,
-    operands: list[str | TextStringObject],
-    st: TextState,
+    # text: str,
+    operands: list[str | bytes | TextStringObject],
+    ts: TextState,
     orientations: tuple[int, ...],
-    output: str,
-    processing_TJ_op: bool,
+    # output: str,
+    # processing_TJ_op: bool,
     visitor_text: Callable[[TextBoxData], None] | None,
+    verbose = False,
 ) -> str:
     
-    def push_text():
-        nonlocal output, text
-        output += text
-        textbox = TextBoxData(st, text)
+    def push_text(text: str):
+        # nonlocal output, text
+        if not text:
+            return
+        # output += text
+        textbox = TextBoxData(ts, text)
+        if verbose:
+            print("    push_text (in handle_tj)", textbox)
         if visitor_text is not None:
             visitor_text(textbox)
-        if processing_TJ_op:
-            st.box_left += textbox.w
-        text = ""
+        # if processing_TJ_op:
+        #     st.box_left += textbox.raw_w
+        # text = ""
 
-    m = mult(st.tm_matrix, st.cm_matrix)
+    text = ""
+    m = mult(ts.tm_matrix, ts.cm_matrix)
     orientation = orient(m)
     if orientation in orientations and len(operands) > 0:
-        if isinstance(operands[0], str):
-            text += operands[0]
+        op0 = operands[0]
+        if isinstance(op0, str):  # `TextStringObject` is instance of `str`
+            text += op0  # op0: str | TextStringObject
         else:
             t: str = ""
-            tt: bytes = (
-                encode_pdfdocencoding(operands[0])
-                if isinstance(operands[0], str)
-                else operands[0]
-            )
-            if isinstance(st.cmap.encoding, str):
+            assert isinstance(op0, bytes)
+            tt: bytes = op0
+            if isinstance(ts.cmap.encoding, str):
                 try:
-                    t = tt.decode(st.cmap.encoding, "surrogatepass")  # apply str encoding
+                    t = tt.decode(ts.cmap.encoding, "surrogatepass")  # apply str encoding
                 except Exception:
                     # the data does not match the expectation,
                     # we use the alternative ;
                     # text extraction may not be good
                     t = tt.decode(
-                        "utf-16-be" if st.cmap.encoding == "charmap" else "charmap",
+                        "utf-16-be" if ts.cmap.encoding == "charmap" else "charmap",
                         "surrogatepass",
                     )  # apply str encoding
             else:  # apply dict encoding
                 t = "".join(
-                    [st.cmap.encoding[x] if x in st.cmap.encoding else bytes((x,)).decode() for x in tt]
+                    [ts.cmap.encoding[x] if x in ts.cmap.encoding else bytes((x,)).decode() for x in tt]
                 )
             # "\u0590 - \u08FF \uFB50 - \uFDFF"
-            for x in [st.cmap.map_dict[x] if x in st.cmap.map_dict else x for x in t]:
+            for x in [ts.cmap.map_dict[x] if x in ts.cmap.map_dict else x for x in t]:
                 # x can be a sequence of bytes ; ex: habibi.pdf
                 if len(x) == 1:
                     xx = ord(x)
@@ -290,22 +305,24 @@ def handle_tj(
                     or 0x20A0 <= xx <= 0x21FF           # but (numbers) indices/exponents
                     or xx in CUSTOM_RTL_SPECIAL_CHARS   # customized....
                 ):
-                    text = x + text if st.rtl_dir else text + x
+                    text = x + text if ts.rtl_dir else text + x
                 elif (  # right-to-left characters set
                     0x0590 <= xx <= 0x08FF
                     or 0xFB1D <= xx <= 0xFDFF
                     or 0xFE70 <= xx <= 0xFEFF
                     or CUSTOM_RTL_MIN <= xx <= CUSTOM_RTL_MAX
                 ):
-                    if not st.rtl_dir:
-                        st.rtl_dir = True
-                        push_text()
+                    if not ts.rtl_dir:
+                        ts.rtl_dir = True
+                        push_text(text)
+                        text = ""
                     text = x + text
                 else:  # left-to-right
                     # print(">",xx,x,end="")
-                    if st.rtl_dir:
-                        st.rtl_dir = False
-                        push_text()
+                    if ts.rtl_dir:
+                        ts.rtl_dir = False
+                        push_text(text)
+                        text = ""
                     text = text + x
                 # fmt: on
     return text
