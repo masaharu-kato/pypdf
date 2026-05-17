@@ -4,6 +4,7 @@ Code related to text extraction.
 Some parts are still in _page.py. In doubt, they will stay there.
 """
 
+import copy
 import math
 import unicodedata
 from collections.abc import Callable
@@ -87,9 +88,21 @@ class TextState:
 class TextBox:
     def __init__(self, ts: TextState, text: str):
         
-        # self._ts = ts
+        self._ts = copy.copy(ts)
         self._text = text
+        self._calculated = False
 
+    # @property
+    # def text_state(self):
+    #     return self._ts
+
+    def _calculate(self):
+
+        if self._calculated:
+            return
+
+        ts = self._ts
+        
         m = mult(ts.tm_matrix, ts.cm_matrix)
 
         tx, ty = 0.0, 0.0
@@ -115,9 +128,8 @@ class TextBox:
         self._space_width = (W_CHAR_HAN * ts.font_size + 2 * ts.char_spacing + ts.space_scale) * ts.char_scale * scale_x
         self._space_height = (ts.font_size + 2 * ts.text_leading) * scale_y
 
-    # @property
-    # def text_state(self):
-    #     return self._ts
+        self._calculated = True
+
 
     @property
     def text(self):
@@ -125,39 +137,48 @@ class TextBox:
 
     @property
     def x(self):
+        self._calculate()
         return self._x
 
     @property
     def y(self):
+        self._calculate()
         return self._y
 
     @property
     def raw_w(self):
+        self._calculate()
         return self._raw_w
 
     @property
     def raw_h(self):
+        self._calculate()
         return self._raw_h
 
     @property
     def w(self):
+        self._calculate()
         return self._w
 
     @property
     def h(self):
+        self._calculate()
         return self._h
     
     @property
     def space_width(self):
+        self._calculate()
         return self._space_width
     
     @property
     def space_height(self):
+        self._calculate()
         return self._space_height
     
     def __repr__(self):
-        return f'TextBoxData((x={self.x}, y={self.y}, w={self.w}, h={self.h}), "{self.text}")'
-
+        if self._calculated:
+            return f'TextBoxData((x={self.x}, y={self.y}, w={self.w}, h={self.h}), "{self.text}")'
+        return f'TextBoxData("{self.text}")'
 
 
 def _calc_box_width(ts: TextState, text_lines: list[str]):
