@@ -1657,7 +1657,7 @@ class PageObject(DictionaryObject):
             # output += text
             textbox = TextBox(ts, text)
             if verbose:
-                print("        push_text", textbox)
+                print("        push_text", textbox, file=sys.stderr)
             if visitor_text is not None:
                 visitor_text(textbox)
             if in_TJ_op:
@@ -1671,7 +1671,7 @@ class PageObject(DictionaryObject):
             global CUSTOM_RTL_MIN, CUSTOM_RTL_MAX, CUSTOM_RTL_SPECIAL_CHARS
 
             if verbose:
-                print("op L", operator, operands)
+                print("op L", operator, operands, file=sys.stderr)
 
             # if not processing_TJ_op:
             #     ts.box_left = 0.0
@@ -1778,7 +1778,7 @@ class PageObject(DictionaryObject):
         for operands, operator in content.operations:
 
             if verbose:
-                print("op  ", operator, operands)
+                print("op  ", operator, operands, file=sys.stderr)
 
             if visitor_operand_before is not None:
                 visitor_operand_before(operator, operands, ts.cm_matrix, ts.tm_matrix)
@@ -1823,7 +1823,7 @@ class PageObject(DictionaryObject):
 
                         d_box_left = -(float(op) / 1000.0) * ts.font_size * ts.char_scale
                         # if verbose:
-                        #     print('        d_box_left:', d_box_left)
+                        #     print('        d_box_left:', d_box_left, file=sys.stderr)
                         ts.box_left += d_box_left
                         # process_operation(b"Tj", [" "])
 
