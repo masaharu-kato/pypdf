@@ -1770,7 +1770,14 @@ class PageObject(DictionaryObject):
                 ts.tm_matrix = (*ts.tm_matrix[0:5], ts.tm_matrix[5] - ts.text_leading)
 
             elif operator == b"Tj":
-                raise RuntimeError("Tj operator is not supported in this function. Use `handle_tj`.")
+                text = handle_tj(
+                    operands,
+                    ts,
+                    orientations,
+                    visitor_text,
+                    verbose=verbose,
+                )
+                push_text(text, in_TJ_op=False)
 
             else:
                 return None
@@ -1834,14 +1841,7 @@ class PageObject(DictionaryObject):
                 ts.box_left = 0.0  # Reset offset
 
             elif operator == b'Tj':
-                text = handle_tj(
-                    operands,
-                    ts,
-                    orientations,
-                    visitor_text,
-                    verbose=verbose,
-                )
-                push_text(text, in_TJ_op=False)
+                process_operation(b"Tj", operands)
 
             elif operator == b"Do":
                 # output += text
