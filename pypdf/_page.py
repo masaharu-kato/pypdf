@@ -1638,7 +1638,7 @@ class PageObject(DictionaryObject):
             font_size=DEFAULT_FONT_SIZE,
             char_scale = 1.0,
             char_spacing = 0.0,  # will be set at first Tc
-            space_scale = 1.0,
+            space_scale = 0.0,
             _space_width = DEFAULT_SPACE_WIDTH,  # will be set correctly at first Tf
             text_leading = 0.0,
             box_left = 0.0,
@@ -1712,7 +1712,7 @@ class PageObject(DictionaryObject):
             elif operator == b"Tz":
                 ts.char_scale = float(operands[0]) / 100.0
             elif operator == b"Tw":
-                ts.space_scale = 1.0 + float(operands[0])
+                ts.space_scale = float(operands[0])
             elif operator == b"TL":
                 ts.text_leading = float(operands[0])
             elif operator == b"Tc":

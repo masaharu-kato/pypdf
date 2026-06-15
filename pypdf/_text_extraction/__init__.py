@@ -56,9 +56,100 @@ class CharMap:
 
     def __str__(self):
         return self.font_res_name
-    
+
     def __repr__(self):
         return repr(self.font_dict)
+
+    def _char_to_code(self, ch: str) -> int | None:
+        """Map a Unicode character back to its char code (for font width table lookup)."""
+        if isinstance(self.encoding, dict):
+            for code, mapped in self.encoding.items():
+                if mapped == ch:
+                    return code
+            # Try map_dict reverse: ch may have been remapped from another char
+            for pre, post in self.map_dict.items():
+                if post == ch:
+                    for code, mapped in self.encoding.items():
+                        if mapped == pre:
+                            return code
+            return None
+        else:
+            # String encoding: find the pre-map character, then encode to bytes
+            t = ch
+            for pre, post in self.map_dict.items():
+                if post == ch and len(pre) == 1:
+                    t = pre
+                    break
+            try:
+                b = t.encode(self.encoding, 'surrogatepass')
+            except Exception:
+                try:
+                    b = ch.encode(self.encoding, 'surrogatepass')
+                except Exception:
+                    return None
+            if len(b) == 1:
+                return b[0]
+            elif len(b) == 2:
+                return (b[0] << 8) | b[1]
+            return None
+
+    def get_char_width_raw(self, ch: str) -> float | None:
+        """Return the glyph width in font units (1/1000 em), or None if unavailable."""
+        if self.font_dict is None:
+            return None
+        char_code = self._char_to_code(ch)
+        if char_code is None:
+            return None
+        return _lookup_font_char_width(self.font_dict, char_code)
+
+
+def _lookup_font_char_width(ft, char_code: int) -> float | None:
+    """Look up char_code width (font units, 1/1000 em) from a PDF font dictionary."""
+    if "/DescendantFonts" in ft:
+        ft1 = ft["/DescendantFonts"][0].get_object()
+        try:
+            dw = float(ft1["/DW"])
+        except Exception:
+            dw = 1000.0
+        if "/W" in ft1:
+            w_arr = list(ft1["/W"])
+            while len(w_arr) >= 2:
+                st = w_arr[0] if isinstance(w_arr[0], int) else int(w_arr[0].get_object())
+                second = w_arr[1].get_object()
+                if isinstance(second, int):
+                    if st <= char_code < second:
+                        val = w_arr[2]
+                        return float(val.get_object() if hasattr(val, 'get_object') else val)
+                    w_arr = w_arr[3:]
+                elif isinstance(second, list):
+                    idx = char_code - st
+                    if 0 <= idx < len(second):
+                        val = second[idx]
+                        return float(val.get_object() if hasattr(val, 'get_object') else val)
+                    w_arr = w_arr[2:]
+                else:
+                    break
+        return dw
+    elif "/Widths" in ft:
+        try:
+            fc = int(ft["/FirstChar"])
+            lc = int(ft["/LastChar"])
+            if fc <= char_code <= lc:
+                widths = list(ft["/Widths"])
+                val = widths[char_code - fc]
+                if hasattr(val, 'get_object'):
+                    val = val.get_object()
+                w = float(val)
+                if w > 0:
+                    return w
+        except Exception:
+            pass
+        try:
+            fd = ft["/FontDescriptor"].get_object()
+            return float(fd["/MissingWidth"])
+        except Exception:
+            pass
+    return None
 
 
 @dataclass
@@ -125,7 +216,7 @@ class TextBox:
         self._w = self._raw_w * scale_x
         self._h = self._raw_h * scale_y
 
-        self._space_width = (W_CHAR_HAN * ts.font_size + 2 * ts.char_spacing + ts.space_scale) * ts.char_scale * scale_x
+        self._space_width = (ts.space_width * 2 * ts.font_size + 2 * ts.char_spacing + ts.space_scale) * ts.char_scale * scale_x
         self._space_height = (ts.font_size + 2 * ts.text_leading) * scale_y
 
         self._calculated = True
@@ -189,14 +280,12 @@ def _calc_box_height(ts: TextState, n_lines: int):
 
 def _calc_line_text_size(ts: TextState, line_text: str):
     total_w = 0.0
-    for i, ch in enumerate(line_text):
-
-        char_w = W_CHAR_ZEN if unicodedata.east_asian_width(ch) in ('W', 'F', 'A') else W_CHAR_HAN
+    for ch in line_text:
+        raw_w = ts.cmap.get_char_width_raw(ch)
+        zen_w = (raw_w / 1000.0) if raw_w is not None else W_CHAR_ZEN
+        char_w = zen_w if unicodedata.east_asian_width(ch) in ('W', 'F', 'A') else zen_w / 2
         total_w += char_w * ts.font_size
-        
-        # if i < len(line_text) - 1:
         total_w += ts.char_spacing
-        # スペース文字（32）の後にのみ Tw を追加で適用
         if ch == ' ':
             total_w += ts.space_scale
 
