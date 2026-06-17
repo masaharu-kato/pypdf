@@ -8,7 +8,7 @@ import copy
 import math
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..generic import TextStringObject, encode_pdfdocencoding
 
@@ -53,6 +53,9 @@ class CharMap:
     map_dict: dict[str, str]
     font_res_name: str # internal name, not the real font-name
     font_dict: dict | None # The font-dictionary describes the font
+    # Caches built lazily — not part of __init__
+    _rev_encoding: dict[str, int] | None = field(init=False, default=None, repr=False)
+    _width_cache: dict[str, float | None] = field(init=False, default_factory=dict, repr=False)
 
     def __str__(self):
         return self.font_res_name
@@ -60,19 +63,24 @@ class CharMap:
     def __repr__(self):
         return repr(self.font_dict)
 
+    def _build_rev_encoding(self) -> None:
+        """Build reverse mapping dict: Unicode char -> char code, stored in _rev_encoding."""
+        if isinstance(self.encoding, dict):
+            rev: dict[str, int] = {ch: code for code, ch in self.encoding.items()}
+            # map_dict: pre -> post; if pre is a known char, expose post -> same code
+            for pre, post in self.map_dict.items():
+                if post not in rev and pre in rev:
+                    rev[post] = rev[pre]
+            self._rev_encoding = rev
+        else:
+            self._rev_encoding = {}
+
     def _char_to_code(self, ch: str) -> int | None:
         """Map a Unicode character back to its char code (for font width table lookup)."""
         if isinstance(self.encoding, dict):
-            for code, mapped in self.encoding.items():
-                if mapped == ch:
-                    return code
-            # Try map_dict reverse: ch may have been remapped from another char
-            for pre, post in self.map_dict.items():
-                if post == ch:
-                    for code, mapped in self.encoding.items():
-                        if mapped == pre:
-                            return code
-            return None
+            if self._rev_encoding is None:
+                self._build_rev_encoding()
+            return self._rev_encoding.get(ch)  # type: ignore[union-attr]
         else:
             # String encoding: find the pre-map character, then encode to bytes
             t = ch
@@ -95,12 +103,18 @@ class CharMap:
 
     def get_char_width_raw(self, ch: str) -> float | None:
         """Return the glyph width in font units (1/1000 em), or None if unavailable."""
+        if ch in self._width_cache:
+            return self._width_cache[ch]
         if self.font_dict is None:
+            self._width_cache[ch] = None
             return None
         char_code = self._char_to_code(ch)
         if char_code is None:
+            self._width_cache[ch] = None
             return None
-        return _lookup_font_char_width(self.font_dict, char_code)
+        w = _lookup_font_char_width(self.font_dict, char_code)
+        self._width_cache[ch] = w
+        return w
 
 
 def _lookup_font_char_width(ft, char_code: int) -> float | None:
@@ -112,21 +126,27 @@ def _lookup_font_char_width(ft, char_code: int) -> float | None:
         except Exception:
             dw = 1000.0
         if "/W" in ft1:
-            w_arr = list(ft1["/W"])
-            while len(w_arr) >= 2:
-                st = w_arr[0] if isinstance(w_arr[0], int) else int(w_arr[0].get_object())
-                second = w_arr[1].get_object()
+            w_arr = ft1["/W"]
+            i = 0
+            n = len(w_arr)
+            while i + 1 < n:
+                st = w_arr[i]
+                if not isinstance(st, int):
+                    st = int(st.get_object())
+                second = w_arr[i + 1]
+                if hasattr(second, 'get_object'):
+                    second = second.get_object()
                 if isinstance(second, int):
-                    if st <= char_code < second:
-                        val = w_arr[2]
+                    if i + 2 < n and st <= char_code < second:
+                        val = w_arr[i + 2]
                         return float(val.get_object() if hasattr(val, 'get_object') else val)
-                    w_arr = w_arr[3:]
+                    i += 3
                 elif isinstance(second, list):
                     idx = char_code - st
                     if 0 <= idx < len(second):
                         val = second[idx]
                         return float(val.get_object() if hasattr(val, 'get_object') else val)
-                    w_arr = w_arr[2:]
+                    i += 2
                 else:
                     break
         return dw
@@ -135,7 +155,7 @@ def _lookup_font_char_width(ft, char_code: int) -> float | None:
             fc = int(ft["/FirstChar"])
             lc = int(ft["/LastChar"])
             if fc <= char_code <= lc:
-                widths = list(ft["/Widths"])
+                widths = ft["/Widths"]
                 val = widths[char_code - fc]
                 if hasattr(val, 'get_object'):
                     val = val.get_object()
